@@ -1,0 +1,56 @@
+services:
+  auth:
+    build:
+      context: ./auth
+
+    depends_on:
+      - mongo
+
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/hoteldb
+
+  booking:
+    build:
+      context: ./booking
+
+    depends_on:
+      - mongo
+
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/hoteldb
+
+  search:
+    build:
+      context: ./search
+
+    depends_on:
+      - mongo
+
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/hoteldb
+
+
+  mongo:
+    image: mongo:8
+
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: hoteldb
+    volumes:
+      - mongo-data:/data/db
+  nginx:
+    image: nginx:latest
+    container_name: nginx
+    restart: always
+    ports:
+      - "3000:80"
+    volumes:
+      - ./default.conf:/etc/nginx/default.conf:ro
+    depends_on:
+      - booking
+      - search
+      - auth
+
+volumes:
+  mongo-data:
