@@ -6,10 +6,7 @@ import org.example.hotelauth.service.JwtService;
 import org.example.hotelauth.view.LoginRequest;
 import org.example.hotelauth.view.SignUpRequest;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/users")
@@ -17,6 +14,7 @@ public class AuthenticationController {
 
   private final AppUserDetailsService appUserDetailsService;
     private final JwtService jwtService;
+    
 
     public AuthenticationController(AppUserDetailsService appUserDetailsService, JwtService jwtService) {
     this.appUserDetailsService = appUserDetailsService;
@@ -34,5 +32,10 @@ public class AuthenticationController {
     String username = appUserDetailsService.loginUser(loginRequest);
     String token = jwtService.generateToken(username);
     return ResponseEntity.ok(token);
+  }
+
+  @GetMapping("/internal/users/{name}")
+  public String getUser(@PathVariable String name) {
+    return appUserDetailsService.getUserId(name);
   }
 }

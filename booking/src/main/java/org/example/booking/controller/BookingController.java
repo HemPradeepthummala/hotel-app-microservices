@@ -9,36 +9,46 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.RestClient;
 
 import java.util.List;
 
 @RestController
 @RequestMapping("/api/bookings")
 public class BookingController {
-  private final BookingService bookingService;
+	private final BookingService bookingService;
+	private final RestClient restClient;
 
-	public BookingController(BookingService bookingService) {
-    this.bookingService = bookingService;
+	public BookingController(BookingService bookingService, RestClient restClient) {
+		this.bookingService = bookingService;
+		this.restClient = restClient;
 	}
 
-  @PostMapping
-  public ResponseEntity<BookingView> bookHotel(@RequestBody BookingRequest bookingRequest, Authentication user) {
-    String userId = "user1";
-    BookingView bookingView = bookingService.book(userId, bookingRequest.hotelId(), bookingRequest.rooms());
-    return ResponseEntity.ok(bookingView);
-  }
+	@PostMapping
+	public ResponseEntity<BookingView> bookHotel(@RequestBody BookingRequest bookingRequest, Authentication user) {
+		String userId = getUserId(user.getName());
+		BookingView bookingView = bookingService.book(userId, bookingRequest.hotelId(), bookingRequest.rooms());
+		return ResponseEntity.ok(bookingView);
+	}
 
-  @GetMapping("/{bookingId}/receipt")
-  public ResponseEntity<String> downloadReceipt(@PathVariable String bookingId){
-    String recipt = bookingService.getRecipt(bookingId);
-    return new ResponseEntity<>(recipt,HttpStatus.OK);
-  }
+	@GetMapping("/{bookingId}/receipt")
+	public ResponseEntity<String> downloadReceipt(@PathVariable String bookingId) {
+		String recipt = bookingService.getRecipt(bookingId);
+		return new ResponseEntity<>(recipt, HttpStatus.OK);
+	}
 
-  @GetMapping
-    public ResponseEntity<List<BookingDetailsView>> listHotels(Authentication user) {
-      String userId = "user1";
-      List<Booking> bookings = bookingService.getBookings(userId);
-      List<BookingDetailsView> bookingList = bookings.stream().map(Booking::project).toList();
-      return ResponseEntity.ok(bookingList);
-    }
+	@GetMapping
+	public ResponseEntity<List<BookingDetailsView>> listHotels(Authentication user) {
+		String userId = getUserId(user.getName());
+		List<Booking> bookings = bookingService.getBookings(userId);
+		List<BookingDetailsView> bookingList = bookings.stream().map(Booking::project).toList();
+		return ResponseEntity.ok(bookingList);
+	}
+
+	private String getUserId(String name) {
+		return restClient.get()
+				.uri("http://localhost:8081/internal/users/{name}", name)
+				.retrieve()
+				.body(String.class);
+	}
 }
