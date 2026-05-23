@@ -47,7 +47,7 @@ public class BookingController {
 
 	private String getUserId(String name) {
 		return restClient.get()
-				.uri("http://localhost:8081/internal/users/{name}", name)
+				.uri("/internal/users/{name}", name)
 				.retrieve()
 				.body(String.class);
 	}

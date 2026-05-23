@@ -1,0 +1,1337 @@
+File: ./.gradle/9.4.1/gc.properties   <EMPTY>
+
+File: ./.gradle/buildOutputCleanup/cache.properties
+#Sat May 23 10:05:37 IST 2026
+gradle.version=9.4.1
+
+File: ./.gradle/vcs-1/gc.properties   <EMPTY>
+
+File: ./auth/.gradle/9.4.1/gc.properties   <EMPTY>
+
+File: ./auth/.gradle/buildOutputCleanup/cache.properties
+#Sat May 23 10:22:00 IST 2026
+gradle.version=9.4.1
+
+File: ./auth/.gradle/vcs-1/gc.properties   <EMPTY>
+
+File: ./auth/build.gradle
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.0.6'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'org.example'
+version = '0.0.1-SNAPSHOT'
+description = 'hotel-auth'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-data-mongodb'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    testImplementation 'org.springframework.boot:spring-boot-starter-data-mongodb-test'
+    testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
+    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+    implementation 'io.jsonwebtoken:jjwt-api:0.13.0'
+    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.13.0'
+    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.13.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+File: ./auth/build/resources/main/application.properties
+spring.application.name=auth
+
+File: ./auth/Dockerfile
+# -------- Build Stage --------
+FROM gradle:9.5.0-jdk25 AS builder
+
+WORKDIR /app
+
+# Copy Gradle files first for better layer caching
+COPY build.gradle settings.gradle gradlew ./
+COPY gradle ./gradle
+
+# Download dependencies
+RUN ./gradlew dependencies --no-daemon || true
+
+# Copy source code
+COPY src ./src
+
+# Build application
+RUN ./gradlew clean bootJar --no-daemon
+
+# -------- Runtime Stage --------
+FROM eclipse-temurin:25-jre
+
+WORKDIR /app
+
+# Copy only the built jar from builder stage
+COPY --from=builder /app/build/libs/*.jar app.jar
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
+
+File: ./auth/gradle/wrapper/gradle-wrapper.properties
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-9.4.1-bin.zip
+networkTimeout=10000
+validateDistributionUrl=true
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+
+File: ./auth/settings.gradle
+rootProject.name = 'auth'
+
+File: ./auth/src/main/java/org/example/hotelauth/config/JwtFilter.java
+package org.example.hotelauth.config;
+
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.example.hotelauth.service.JwtService;
+import org.jspecify.annotations.NonNull;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import java.io.IOException;
+import java.util.List;
+@Component
+public class JwtFilter extends OncePerRequestFilter {
+
+    private final JwtService jwtService;
+
+    public JwtFilter(JwtService jwtService) {
+        this.jwtService = jwtService;
+    }
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, @NonNull HttpServletResponse response, @NonNull FilterChain filterChain) throws ServletException, IOException {
+        String header = request.getHeader("Authorization");
+        if(header == null){
+            filterChain.doFilter(
+                    request,
+                    response
+            );
+            return;
+        }
+
+        assert header != null;
+        String token = header.substring(7);
+        if(jwtService.validate(token)){
+            String username = jwtService.extractUsername(token);
+            Authentication auth = new UsernamePasswordAuthenticationToken(username, null, List.of());
+            SecurityContextHolder
+                    .getContext()
+                    .setAuthentication(auth);
+        }
+        filterChain.doFilter(request, response);
+    }
+}
+
+File: ./auth/src/main/java/org/example/hotelauth/config/Security.java
+package org.example.hotelauth.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.stereotype.Component;
+
+@Component
+public class Security{
+  @Bean
+  public SecurityFilterChain securityFilterChain(HttpSecurity httpSecurity,JwtFilter jwtFilter) {
+    httpSecurity
+        .cors(Customizer.withDefaults())
+        .csrf(AbstractHttpConfigurer::disable)
+        .authorizeHttpRequests(auth -> auth
+            .requestMatchers("/api/users/register").permitAll()
+            .requestMatchers("/api/users/login").permitAll()
+            .anyRequest().authenticated())
+        .formLogin(Customizer.withDefaults())
+            .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
+
+    return httpSecurity.build();
+  }
+}
+
+File: ./auth/src/main/java/org/example/hotelauth/controller/AuthenticationContro
+ller.java
+package org.example.hotelauth.controller;
+
+import org.example.hotelauth.exception.UserNotFoundException;
+import org.example.hotelauth.service.AppUserDetailsService;
+import org.example.hotelauth.service.JwtService;
+import org.example.hotelauth.view.LoginRequest;
+import org.example.hotelauth.view.SignUpRequest;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/users")
+public class AuthenticationController {
+
+  private final AppUserDetailsService appUserDetailsService;
+    private final JwtService jwtService;
+    
+
+    public AuthenticationController(AppUserDetailsService appUserDetailsService, JwtService jwtService) {
+    this.appUserDetailsService = appUserDetailsService;
+        this.jwtService = jwtService;
+    }
+
+  @PostMapping("/register")
+  public ResponseEntity<String> register(@RequestBody SignUpRequest signUpRequest) {
+    String userId = appUserDetailsService.registerUser(signUpRequest);
+    return ResponseEntity.ok(userId);
+  }
+
+  @PostMapping("/login")
+  public ResponseEntity<String> login(@RequestBody LoginRequest loginRequest) throws UserNotFoundException {
+    String username = appUserDetailsService.loginUser(loginRequest);
+    String token = jwtService.generateToken(username);
+    return ResponseEntity.ok(token);
+  }
+
+  @GetMapping("/internal/users/{name}")
+  public String getUser(@PathVariable String name) {
+    return appUserDetailsService.getUserId(name);
+  }
+}
+
+File: ./auth/src/main/java/org/example/hotelauth/exception/UserNotFoundException
+.java
+package org.example.hotelauth.exception;
+
+public class UserNotFoundException extends Throwable {
+  public UserNotFoundException(String message) {
+    super(message);
+  }
+}
+
+File: ./auth/src/main/java/org/example/hotelauth/filter/LoggingFilter.java
+package org.example.hotelauth.filter;
+
+
+import jakarta.servlet.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.io.IOException;
+
+@Component
+public class LoggingFilter implements Filter {
+
+  @Override
+  public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) throws IOException, ServletException {
+    Logger logger = LoggerFactory.getLogger(LoggingFilter.class);
+    logger.info("From logger");
+
+    long start = System.currentTimeMillis();
+    try {
+      chain.doFilter(request, response);
+    } finally {
+      long end = System.currentTimeMillis() - start;
+      System.out.println(response);
+      logger.info("total time taken: {}", end);
+    }
+  }
+}
+
+File: ./auth/src/main/java/org/example/hotelauth/HotelAuthApplication.java
+package org.example.hotelauth;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class HotelAuthApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(HotelAuthApplication.class, args);
+    }
+
+}
+
+File: ./auth/src/main/java/org/example/hotelauth/model/User.java
+package org.example.hotelauth.model;
+
+import org.jspecify.annotations.Nullable;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.userdetails.UserDetails;
+
+import java.util.Collection;
+import java.util.List;
+
+@Document
+public class User implements UserDetails {
+  @Id
+  private final String userId;
+  private final String username;
+  private final String password;
+
+  public User(String userId, String username, String password) {
+    this.userId = userId;
+    this.username = username;
+    this.password = password;
+  }
+
+  @Override
+  public Collection<? extends GrantedAuthority> getAuthorities() {
+    return List.of();
+  }
+
+  @Override
+  public @Nullable String getPassword() {
+    return this.password;
+  }
+
+  @Override
+  public String getUsername() {
+    return this.username;
+  }
+
+  public String getUserId() {
+    return this.userId;
+  }
+}
+
+File: ./auth/src/main/java/org/example/hotelauth/repository/UserRepository.java
+package org.example.hotelauth.repository;
+
+import org.example.hotelauth.model.User;
+import org.springframework.data.mongodb.repository.MongoRepository;
+import org.springframework.data.mongodb.repository.Query;
+import org.springframework.security.core.userdetails.UserDetails;
+
+public interface UserRepository extends MongoRepository<User, String> {
+    UserDetails findUserByUsername(String username);
+
+    @Query(value = "{ 'username' : ?0 }", fields = "{ '_id' : 1 }")
+    String findUserIdByUsername(String username);
+}
+
+File: ./auth/src/main/java/org/example/hotelauth/service/AppUserDetailsService.j
+ava
+package org.example.hotelauth.service;
+
+
+
+import org.example.hotelauth.exception.UserNotFoundException;
+import org.example.hotelauth.model.User;
+import org.example.hotelauth.repository.UserRepository;
+import org.example.hotelauth.view.LoginRequest;
+import org.example.hotelauth.view.SignUpRequest;
+import org.jspecify.annotations.NonNull;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
+@Service
+public class AppUserDetailsService implements UserDetailsService {
+
+  private final  UserRepository userRepository;
+  private final IdGenerator idGenerator;
+
+  public AppUserDetailsService(UserRepository userRepository, IdGenerator idGenerator) {
+    this.userRepository = userRepository;
+    this.idGenerator = idGenerator;
+  }
+
+  @Override
+  public UserDetails loadUserByUsername(@NonNull String username) throws UsernameNotFoundException {
+    UserDetails userDetails = userRepository.findUserByUsername(username);
+    if (userDetails == null) throw new UsernameNotFoundException("user doesn't exist");
+    return userDetails;
+  }
+
+  @Transactional
+  public String registerUser(SignUpRequest userDetails) {
+    User user = new User(idGenerator.generate(), userDetails.username(), userDetails.password());
+    this.userRepository.save(user);
+
+    return this.userRepository.findUserIdByUsername(userDetails.username());
+  }
+
+  public PasswordEncoder passWordEncoder() {
+    return new BCryptPasswordEncoder();
+  }
+
+  public String loginUser(LoginRequest loginRequest) throws UserNotFoundException {
+    UserDetails user = this.userRepository.findUserByUsername(loginRequest.username());
+    String storedPassword = user.getPassword();
+
+    assert storedPassword != null;
+    if (!storedPassword.equals(loginRequest.password())) {
+      throw new UserNotFoundException("");
+    }
+    return user.getUsername();
+  }
+
+  public String getUserId(String user) {
+    String userId = this.userRepository.findUserIdByUsername(user);
+    ObjectMapper objectMapper = new ObjectMapper();
+    JsonNode jsonNode = objectMapper.readTree(userId);
+    String id = jsonNode.get("_id").asText();
+    return id;
+  }
+}
+
+File: ./auth/src/main/java/org/example/hotelauth/service/IdGenerator.java
+package org.example.hotelauth.service;
+
+public interface IdGenerator {
+  public String generate();
+}
+
+File: ./auth/src/main/java/org/example/hotelauth/service/JwtService.java
+package org.example.hotelauth.service;
+
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
+import org.springframework.stereotype.Service;
+
+import javax.crypto.SecretKey;
+import java.security.Key;
+import java.util.Date;
+
+
+@Service
+public class JwtService {
+    private final String SECRET= "SecretkeyisSecureSecretkeyisSecureSecretkeyisSecure";
+
+    public String generateToken(String username){
+        return Jwts.builder().subject(username).issuedAt(new Date()).expiration(
+                new Date(System.currentTimeMillis() + 3600000))
+                        .signWith(getKey()).
+                compact();
+    }
+
+    private Key getKey() {
+        return Keys.hmacShaKeyFor(SECRET.getBytes());
+    }
+    public String extractUsername(String token){
+        return Jwts.parser()
+                .verifyWith((SecretKey)getKey())
+                .build()
+                .parseSignedClaims(token)
+                .getPayload()
+                .getSubject();
+    }
+
+    public boolean validate(String token) {
+
+        try {
+            Jwts.parser()
+                    .verifyWith((SecretKey)getKey())
+                    .build()
+                    .parseSignedClaims(token);
+
+            return true;
+
+        } catch (Exception e) {
+            return false;
+        }
+    }
+}
+
+File: ./auth/src/main/java/org/example/hotelauth/service/UUIDGenerator.java
+package org.example.hotelauth.service;
+
+import org.springframework.stereotype.Service;
+
+import java.util.UUID;
+
+@Service
+public class UUIDGenerator implements IdGenerator{
+  @Override
+  public String generate() {
+      return UUID.randomUUID().toString();
+  }
+}
+
+File: ./auth/src/main/java/org/example/hotelauth/view/LoginRequest.java
+package org.example.hotelauth.view;
+
+public record LoginRequest(String username, String password) {
+}
+
+File: ./auth/src/main/java/org/example/hotelauth/view/SignUpRequest.java
+package org.example.hotelauth.view;
+
+public record SignUpRequest(String username, String password) {
+}
+
+File: ./auth/src/main/resources/application.properties
+spring.application.name=auth
+spring.mongodb.uri=mongodb://localhost:27017/hoteldb
+
+
+File: ./auth/src/test/java/org/example/auth/AuthApplicationTests.java
+package org.example.auth;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+
+//@SpringBootTest
+//class AuthApplicationTests {
+//
+//  @Test
+//  void contextLoads() {
+//  }
+//
+//}
+
+File: ./booking/.gradle/9.4.1/gc.properties   <EMPTY>
+
+File: ./booking/.gradle/buildOutputCleanup/cache.properties
+#Sat May 23 10:15:22 IST 2026
+gradle.version=9.4.1
+
+File: ./booking/.gradle/vcs-1/gc.properties   <EMPTY>
+
+File: ./booking/build.gradle
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.0.6'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'org.example'
+version = '0.0.1-SNAPSHOT'
+description = 'booking'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    implementation 'org.springframework.boot:spring-boot-starter-data-mongodb'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    testImplementation 'org.springframework.boot:spring-boot-starter-data-redis-test'
+    testImplementation 'org.springframework.boot:spring-boot-starter-mongodb-test'
+    testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
+    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+    implementation 'io.jsonwebtoken:jjwt-api:0.13.0'
+    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.13.0'
+    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.13.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+File: ./booking/build/resources/main/application.properties
+spring.application.name=booking
+
+File: ./booking/Dockerfile
+# -------- Build Stage --------
+FROM gradle:9.5.0-jdk25 AS builder
+
+WORKDIR /app
+
+# Copy Gradle files first for better layer caching
+COPY build.gradle settings.gradle gradlew ./
+COPY gradle ./gradle
+
+# Download dependencies
+RUN ./gradlew dependencies --no-daemon || true
+
+# Copy source code
+COPY src ./src
+
+# Build application
+RUN ./gradlew clean bootJar --no-daemon
+
+# -------- Runtime Stage --------
+FROM eclipse-temurin:25-jre
+
+WORKDIR /app
+
+# Copy only the built jar from builder stage
+COPY --from=builder /app/build/libs/*.jar app.jar
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
+
+File: ./booking/gradle/wrapper/gradle-wrapper.properties
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-9.4.1-bin.zip
+networkTimeout=10000
+validateDistributionUrl=true
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+
+File: ./booking/settings.gradle
+rootProject.name = 'booking'
+
+File: ./booking/src/main/java/org/example/booking/BookingApplication.java
+package org.example.booking;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class BookingApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(BookingApplication.class, args);
+    }
+
+}
+
+File: ./booking/src/main/java/org/example/booking/config/AppConfig.java
+package org.example.booking.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.client.RestClient;
+
+@Configuration
+public class AppConfig {
+
+    @Bean
+    public RestClient restClient() {
+        return RestClient.create();
+    }
+}
+
+File: ./booking/src/main/java/org/example/booking/config/JwtFilter.java
+package org.example.booking.config;
+
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.example.booking.service.JwtService;
+import org.jspecify.annotations.NonNull;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import java.io.IOException;
+import java.util.List;
+@Component
+public class JwtFilter extends OncePerRequestFilter {
+
+    private final JwtService jwtService;
+
+    public JwtFilter(JwtService jwtService) {
+        this.jwtService = jwtService;
+    }
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, @NonNull HttpServletResponse response, @NonNull FilterChain filterChain) throws ServletException, IOException {
+        String header = request.getHeader("Authorization");
+        if(header == null){
+            filterChain.doFilter(
+                    request,
+                    response
+            );
+            return;
+        }
+
+        assert header != null;
+        String token = header.substring(7);
+        if(jwtService.validate(token)){
+            String username = jwtService.extractUsername(token);
+            Authentication auth = new UsernamePasswordAuthenticationToken(username, null, List.of());
+            SecurityContextHolder
+                    .getContext()
+                    .setAuthentication(auth);
+        }
+        filterChain.doFilter(request, response);
+    }
+}
+
+File: ./booking/src/main/java/org/example/booking/config/Security.java
+package org.example.booking.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.stereotype.Component;
+
+@Component
+public class Security {
+
+  @Bean
+  public SecurityFilterChain securityFilterChain(
+      HttpSecurity httpSecurity,
+      JwtFilter jwtFilter) throws Exception {
+
+    httpSecurity
+        .cors(Customizer.withDefaults())
+        .csrf(AbstractHttpConfigurer::disable)
+        .sessionManagement(session ->
+            session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+        .authorizeHttpRequests(auth -> auth
+            .anyRequest().authenticated())
+        .addFilterBefore(
+            jwtFilter,
+            UsernamePasswordAuthenticationFilter.class
+        );
+
+    return httpSecurity.build();
+  }
+}
+
+File: ./booking/src/main/java/org/example/booking/controller/BookingController.j
+ava
+package org.example.booking.controller;
+
+import org.example.booking.model.Booking;
+import org.example.booking.service.BookingService;
+import org.example.booking.view.BookingDetailsView;
+import org.example.booking.view.BookingRequest;
+import org.example.booking.view.BookingView;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.RestClient;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/bookings")
+public class BookingController {
+    private final BookingService bookingService;
+    private final RestClient restClient;
+
+    public BookingController(BookingService bookingService, RestClient restClient) {
+        this.bookingService = bookingService;
+        this.restClient = restClient;
+    }
+
+    @PostMapping
+    public ResponseEntity<BookingView> bookHotel(@RequestBody BookingRequest bookingRequest, Authentication user) {
+        String userId = getUserId(user.getName());
+        BookingView bookingView = bookingService.book(userId, bookingRequest.hotelId(), bookingRequest.rooms());
+        return ResponseEntity.ok(bookingView);
+    }
+
+    @GetMapping("/{bookingId}/receipt")
+    public ResponseEntity<String> downloadReceipt(@PathVariable String bookingId) {
+        String recipt = bookingService.getRecipt(bookingId);
+        return new ResponseEntity<>(recipt, HttpStatus.OK);
+    }
+
+    @GetMapping
+    public ResponseEntity<List<BookingDetailsView>> listHotels(Authentication user) {
+        String userId = getUserId(user.getName());
+        List<Booking> bookings = bookingService.getBookings(userId);
+        List<BookingDetailsView> bookingList = bookings.stream().map(Booking::project).toList();
+        return ResponseEntity.ok(bookingList);
+    }
+
+    private String getUserId(String name) {
+        return restClient.get()
+                .uri("/internal/users/{name}", name)
+                .retrieve()
+                .body(String.class);
+    }
+}
+
+File: ./booking/src/main/java/org/example/booking/filter/LoggingFilter.java
+package org.example.booking.filter;
+
+
+import jakarta.servlet.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.io.IOException;
+
+@Component
+public class LoggingFilter implements Filter {
+
+  @Override
+  public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) throws IOException, ServletException {
+    Logger logger = LoggerFactory.getLogger(LoggingFilter.class);
+    logger.info("From logger");
+
+    long start = System.currentTimeMillis();
+    try {
+      chain.doFilter(request, response);
+    } finally {
+      long end = System.currentTimeMillis() - start;
+      System.out.println(response);
+      logger.info("total time taken: {}", end);
+    }
+  }
+}
+
+File: ./booking/src/main/java/org/example/booking/model/Booking.java
+package org.example.booking.model;
+
+import org.example.booking.view.BookingDetailsView;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
+
+@Document
+public class Booking {
+    @Id
+    private final String bookingId;
+    private final String userId;
+    private final String hotelId;
+    private final Integer rooms;
+
+    public Booking(String bookingId, String userId, String hotelId, Integer rooms) {
+        this.bookingId = bookingId;
+        this.userId = userId;
+        this.hotelId = hotelId;
+        this.rooms = rooms;
+    }
+
+    public String generateReceipt() {
+        return String.format("you have booked %s rooms", rooms);
+    }
+
+    public BookingDetailsView project() {
+        return new BookingDetailsView(bookingId, userId, hotelId, rooms);
+    }
+}
+
+File: ./booking/src/main/java/org/example/booking/repository/BookingRepository.j
+ava
+package org.example.booking.repository;
+
+import org.example.booking.model.Booking;
+import org.springframework.data.mongodb.repository.MongoRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+
+@Repository
+public interface BookingRepository extends MongoRepository<Booking, String> {
+    Booking getBookingsByBookingId(String bookingId);
+
+    List<Booking> findBookingsByUserId(String userId);
+}
+
+
+File: ./booking/src/main/java/org/example/booking/service/BookingService.java
+package org.example.booking.service;
+
+import org.example.booking.model.Booking;
+import org.example.booking.repository.BookingRepository;
+import org.example.booking.view.BookingView;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+
+@Service
+public class BookingService {
+    private final BookingRepository bookings;
+    private final IdGenerator idGenerator;
+
+    public BookingService(BookingRepository bookingRepository, IdGenerator idGenerator) {
+        this.bookings = bookingRepository;
+        this.idGenerator = idGenerator;
+    }
+
+    @Transactional
+    public BookingView book(String userId, String hotelId, Integer rooms) {
+        String bookingId = idGenerator.generate();
+        Booking booking = new Booking(bookingId, userId, hotelId, rooms);
+
+        this.bookings.save(booking);
+
+        return new BookingView(bookingId);
+    }
+
+    public String getRecipt(String bookingId) {
+        Booking bookingInfo = bookings.getBookingsByBookingId(bookingId);
+        System.out.println("bookings  :: " + bookingInfo.generateReceipt());
+        return bookingInfo.generateReceipt();
+    }
+
+    public List<Booking> getBookings(String id) {
+        List<Booking> bookingsByUserId = bookings.findBookingsByUserId(id);
+        return bookingsByUserId;
+    }
+}
+
+File: ./booking/src/main/java/org/example/booking/service/IdGenerator.java
+package org.example.booking.service;
+
+public interface IdGenerator {
+  public String generate();
+}
+
+File: ./booking/src/main/java/org/example/booking/service/JwtService.java
+package org.example.booking.service;
+
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
+import org.springframework.stereotype.Service;
+
+import javax.crypto.SecretKey;
+import java.security.Key;
+import java.util.Date;
+
+
+@Service
+public class JwtService {
+    private final String SECRET= "SecretkeyisSecureSecretkeyisSecureSecretkeyisSecure";
+
+    public String generateToken(String username){
+        return Jwts.builder().subject(username).issuedAt(new Date()).expiration(
+                new Date(System.currentTimeMillis() + 3600000))
+                        .signWith(getKey()).
+                compact();
+    }
+
+    private Key getKey() {
+        return Keys.hmacShaKeyFor(SECRET.getBytes());
+    }
+    public String extractUsername(String token){
+        return Jwts.parser()
+                .verifyWith((SecretKey)getKey())
+                .build()
+                .parseSignedClaims(token)
+                .getPayload()
+                .getSubject();
+    }
+
+    public boolean validate(String token) {
+
+        try {
+            Jwts.parser()
+                    .verifyWith((SecretKey)getKey())
+                    .build()
+                    .parseSignedClaims(token);
+
+            return true;
+
+        } catch (Exception e) {
+            return false;
+        }
+    }
+}
+
+File: ./booking/src/main/java/org/example/booking/service/UUIDGenerator.java
+package org.example.booking.service;
+
+import org.springframework.stereotype.Service;
+
+import java.util.UUID;
+
+@Service
+public class UUIDGenerator implements IdGenerator {
+  @Override
+  public String generate() {
+      return UUID.randomUUID().toString();
+  }
+}
+
+File: ./booking/src/main/java/org/example/booking/view/BookingDetailsView.java
+package org.example.booking.view;
+
+public record BookingDetailsView(String bookingId, String userId, String hotelId, int rooms) {
+}
+
+File: ./booking/src/main/java/org/example/booking/view/BookingRequest.java
+package org.example.booking.view;
+
+public record BookingRequest(String hotelId, Integer rooms) {
+}
+
+File: ./booking/src/main/java/org/example/booking/view/BookingView.java
+package org.example.booking.view;
+
+public record BookingView(String bookingId) {
+}
+
+File: ./booking/src/main/resources/application.properties
+spring.application.name=booking
+spring.mongodb.uri=mongodb://localhost:27017/hotel
+
+
+File: ./booking/src/test/java/org/example/booking/BookingApplicationTests.java
+package org.example.booking;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+
+@SpringBootTest
+class BookingApplicationTests {
+
+    @Test
+    void contextLoads() {
+    }
+
+}
+
+File: ./docker-compose.yml
+version: "3.9"
+
+services:
+  auth:
+    build:
+      context: ./auth
+    restart: always
+
+    depends_on:
+      - mongo
+
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/hoteldb
+
+  booking:
+    build:
+      context: ./booking
+    restart: always
+
+    depends_on:
+      - mongo
+
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/hoteldb
+
+  search:
+    build:
+      context: ./search
+    restart: always
+
+    depends_on:
+      - mongo
+
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/hoteldb
+
+
+  mongo:
+    image: mongo:8
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: hoteldb
+    volumes:
+      - mongo-data:/data/db
+
+
+
+  nginx:
+    image: nginx:latest
+    container_name: nginx
+    restart: always
+    ports:
+      - "3000:80"
+    volumes:
+      - ./default.conf:/etc/nginx/default.conf:ro
+    depends_on:
+      - booking
+      - search
+      - auth
+
+volumes:
+  mongo-data:
+
+File: ./gradle/wrapper/gradle-wrapper.properties
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-9.4.1-bin.zip
+networkTimeout=10000
+validateDistributionUrl=true
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+
+File: ./search/.gradle/9.4.1/gc.properties   <EMPTY>
+
+File: ./search/.gradle/buildOutputCleanup/cache.properties
+#Sat May 23 10:14:35 IST 2026
+gradle.version=9.4.1
+
+File: ./search/.gradle/vcs-1/gc.properties   <EMPTY>
+
+File: ./search/build.gradle
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.0.6'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'org.example'
+version = '0.0.1-SNAPSHOT'
+description = 'search'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-data-mongodb'
+    implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    testImplementation 'org.springframework.boot:spring-boot-starter-data-mongodb-test'
+    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+File: ./search/build/resources/main/application.properties
+spring.application.name=search
+
+File: ./search/Dockerfile
+# -------- Build Stage --------
+FROM gradle:9.5.0-jdk25 AS builder
+
+WORKDIR /app
+
+# Copy Gradle files first for better layer caching
+COPY build.gradle settings.gradle gradlew ./
+COPY gradle ./gradle
+
+# Download dependencies
+RUN ./gradlew dependencies --no-daemon || true
+
+# Copy source code
+COPY src ./src
+
+# Build application
+RUN ./gradlew clean bootJar --no-daemon
+
+# -------- Runtime Stage --------
+FROM eclipse-temurin:25-jre
+
+WORKDIR /app
+
+# Copy only the built jar from builder stage
+COPY --from=builder /app/build/libs/*.jar app.jar
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
+
+File: ./search/gradle/wrapper/gradle-wrapper.properties
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-9.4.1-bin.zip
+networkTimeout=10000
+validateDistributionUrl=true
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+
+File: ./search/settings.gradle
+rootProject.name = 'search'
+
+File: ./search/src/main/java/org/example/search/controller/HotelController.java
+package org.example.search.controller;
+
+
+import org.example.search.exception.CityNotFoundException;
+import org.example.search.service.SearchServices;
+import org.example.search.view.HotelView;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+
+@RestController
+public class HotelController {
+    private final SearchServices searchServices;
+
+    public HotelController(SearchServices searchServices) {
+        this.searchServices = searchServices;
+    }
+
+    @GetMapping("/api/search/hotels")
+    public ResponseEntity<List<HotelView>> search(@RequestParam String city){
+        try {
+            return ResponseEntity.ok(searchServices.searchHotel(city));
+        } catch (CityNotFoundException e) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
+}
+
+File: ./search/src/main/java/org/example/search/exception/CityNotFoundException.
+java
+package org.example.search.exception;
+
+public class CityNotFoundException extends Throwable {
+    public CityNotFoundException(String s) {
+        super(s);
+    }
+}
+
+File: ./search/src/main/java/org/example/search/model/Hotel.java
+package org.example.search.model;
+
+import org.example.search.view.HotelView;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
+
+@Document
+public class Hotel {
+  @Id
+  private final String hotelId;
+  private final String name;
+  private final int rooms;
+  private final String city;
+
+  public Hotel(String hotelId, String name, int rooms, String city) {
+    this.hotelId = hotelId;
+    this.name = name;
+    this.rooms = rooms;
+    this.city = city;
+  }
+
+  public HotelView project() {
+    return new HotelView(this.hotelId, this.name, this.rooms, this.city);
+  }
+}
+
+File: ./search/src/main/java/org/example/search/repository/HotelRepository.java
+package org.example.search.repository;
+
+import org.example.search.model.Hotel;
+import org.springframework.data.mongodb.repository.MongoRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+
+@Repository
+public interface HotelRepository extends MongoRepository<Hotel, String> {
+  List<Hotel> findHotelByCity(String city);
+}
+
+File: ./search/src/main/java/org/example/search/SearchApplication.java
+package org.example.search;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class SearchApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(SearchApplication.class, args);
+    }
+
+}
+    
+
+File: ./search/src/main/java/org/example/search/service/SearchServices.java
+package org.example.search.service;
+
+
+import org.example.search.exception.CityNotFoundException;
+import org.example.search.model.Hotel;
+import org.example.search.repository.HotelRepository;
+import org.example.search.view.HotelView;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+
+
+@Service
+public class SearchServices {
+    private final HotelRepository hotels;
+
+    public SearchServices(HotelRepository hotelRepository) {
+        this.hotels = hotelRepository;
+    }
+
+    public List<HotelView> searchHotel(String city) throws CityNotFoundException {
+        if (city.isEmpty()) {
+            throw new CityNotFoundException("empty city name");
+        }
+        List<Hotel> hotelByCity = hotels.findHotelByCity(city);
+        return hotelByCity.stream().map(Hotel::project).toList();
+    }
+}
+
+File: ./search/src/main/java/org/example/search/view/HotelView.java
+package org.example.search.view;
+
+public record HotelView(String hotelId, String name, int rooms, String city) {
+}
+
+File: ./search/src/main/resources/application.properties
+spring.application.name=search
+spring.mongodb.uri=mongodb://localhost:27017/hoteldb
+
+File: ./search/src/test/java/org/example/search/SearchApplicationTests.java
+package org.example.search;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+
+@SpringBootTest
+class SearchApplicationTests {
+
+    @Test
+    void contextLoads() {
+    }
+
+}
+
+File: ./settings.gradle
+rootProject.name = 'hotel-app-microservices'
+include(
+  "auth", "booking","search"
+)

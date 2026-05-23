@@ -9,6 +9,8 @@ public class AppConfig {
 
 	@Bean
 	public RestClient restClient() {
-		return RestClient.create();
+		return RestClient.builder()
+				.baseUrl("http://auth:8080")
+				.build();
 	}
 }
