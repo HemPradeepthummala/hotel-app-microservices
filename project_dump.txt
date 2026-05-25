@@ -54,37 +54,14 @@ tasks.named('test') {
 
 File: ./auth/build/resources/main/application.properties
 spring.application.name=auth
+spring.mongodb.uri=mongodb://mongo:27017/hoteldb
 
 File: ./auth/Dockerfile
-# -------- Build Stage --------
-FROM gradle:9.5.0-jdk25 AS builder
-
+FROM gradle:jdk25
 WORKDIR /app
-
-# Copy Gradle files first for better layer caching
-COPY build.gradle settings.gradle gradlew ./
-COPY gradle ./gradle
-
-# Download dependencies
-RUN ./gradlew dependencies --no-daemon || true
-
-# Copy source code
-COPY src ./src
-
-# Build application
-RUN ./gradlew clean bootJar --no-daemon
-
-# -------- Runtime Stage --------
-FROM eclipse-temurin:25-jre
-
-WORKDIR /app
-
-# Copy only the built jar from builder stage
-COPY --from=builder /app/build/libs/*.jar app.jar
-
-EXPOSE 8080
-
-ENTRYPOINT ["java", "-jar", "app.jar"]
+COPY . .
+#RUN gradle clean build
+CMD ["java", "-jar", "build/libs/auth-0.0.1-SNAPSHOT.jar"]
 
 File: ./auth/gradle/wrapper/gradle-wrapper.properties
 distributionBase=GRADLE_USER_HOME
@@ -139,7 +116,7 @@ public class JwtFilter extends OncePerRequestFilter {
         String token = header.substring(7);
         if(jwtService.validate(token)){
             String username = jwtService.extractUsername(token);
-            Authentication auth = new UsernamePasswordAuthenticationToken(username, null, List.of());
+            Authentication auth = UsernamePasswordAuthenticationToken.authenticated(username, null, List.of());
             SecurityContextHolder
                     .getContext()
                     .setAuthentication(auth);
@@ -155,6 +132,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.stereotype.Component;
@@ -166,12 +144,13 @@ public class Security{
     httpSecurity
         .cors(Customizer.withDefaults())
         .csrf(AbstractHttpConfigurer::disable)
+        .sessionManagement(session ->
+            session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .authorizeHttpRequests(auth -> auth
             .requestMatchers("/api/users/register").permitAll()
             .requestMatchers("/api/users/login").permitAll()
             .anyRequest().authenticated())
-        .formLogin(Customizer.withDefaults())
-            .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
+        .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
 
     return httpSecurity.build();
   }
@@ -495,8 +474,7 @@ public record SignUpRequest(String username, String password) {
 
 File: ./auth/src/main/resources/application.properties
 spring.application.name=auth
-spring.mongodb.uri=mongodb://localhost:27017/hoteldb
-
+spring.mongodb.uri=mongodb://mongo:27017/hoteldb
 
 File: ./auth/src/test/java/org/example/auth/AuthApplicationTests.java
 package org.example.auth;
@@ -563,37 +541,14 @@ tasks.named('test') {
 
 File: ./booking/build/resources/main/application.properties
 spring.application.name=booking
+spring.mongodb.uri=mongodb://mongo:27017/hoteldb
 
 File: ./booking/Dockerfile
-# -------- Build Stage --------
-FROM gradle:9.5.0-jdk25 AS builder
-
+FROM gradle:jdk25
 WORKDIR /app
-
-# Copy Gradle files first for better layer caching
-COPY build.gradle settings.gradle gradlew ./
-COPY gradle ./gradle
-
-# Download dependencies
-RUN ./gradlew dependencies --no-daemon || true
-
-# Copy source code
-COPY src ./src
-
-# Build application
-RUN ./gradlew clean bootJar --no-daemon
-
-# -------- Runtime Stage --------
-FROM eclipse-temurin:25-jre
-
-WORKDIR /app
-
-# Copy only the built jar from builder stage
-COPY --from=builder /app/build/libs/*.jar app.jar
-
-EXPOSE 8080
-
-ENTRYPOINT ["java", "-jar", "app.jar"]
+COPY . .
+#RUN gradle clean build
+CMD ["java", "-jar", "build/libs/booking-0.0.1-SNAPSHOT.jar"]
 
 File: ./booking/gradle/wrapper/gradle-wrapper.properties
 distributionBase=GRADLE_USER_HOME
@@ -634,7 +589,9 @@ public class AppConfig {
 
     @Bean
     public RestClient restClient() {
-        return RestClient.create();
+        return RestClient.builder()
+                .baseUrl("http://auth:8080")
+                .build();
     }
 }
 
@@ -679,7 +636,7 @@ public class JwtFilter extends OncePerRequestFilter {
         String token = header.substring(7);
         if(jwtService.validate(token)){
             String username = jwtService.extractUsername(token);
-            Authentication auth = new UsernamePasswordAuthenticationToken(username, null, List.of());
+            Authentication auth = UsernamePasswordAuthenticationToken.authenticated(username, null, List.of());
             SecurityContextHolder
                     .getContext()
                     .setAuthentication(auth);
@@ -703,25 +660,25 @@ import org.springframework.stereotype.Component;
 @Component
 public class Security {
 
-  @Bean
-  public SecurityFilterChain securityFilterChain(
-      HttpSecurity httpSecurity,
-      JwtFilter jwtFilter) throws Exception {
+    @Bean
+    public SecurityFilterChain securityFilterChain(
+            HttpSecurity httpSecurity,
+            JwtFilter jwtFilter) throws Exception {
 
-    httpSecurity
-        .cors(Customizer.withDefaults())
-        .csrf(AbstractHttpConfigurer::disable)
-        .sessionManagement(session ->
-            session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-        .authorizeHttpRequests(auth -> auth
-            .anyRequest().authenticated())
-        .addFilterBefore(
-            jwtFilter,
-            UsernamePasswordAuthenticationFilter.class
-        );
+        httpSecurity
+                .cors(Customizer.withDefaults())
+                .csrf(AbstractHttpConfigurer::disable)
+                .sessionManagement(session ->
+                        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        .anyRequest().authenticated())
+                .addFilterBefore(
+                        jwtFilter,
+                        UsernamePasswordAuthenticationFilter.class
+                );
 
-    return httpSecurity.build();
-  }
+        return httpSecurity.build();
+    }
 }
 
 File: ./booking/src/main/java/org/example/booking/controller/BookingController.j
@@ -996,8 +953,7 @@ public record BookingView(String bookingId) {
 
 File: ./booking/src/main/resources/application.properties
 spring.application.name=booking
-spring.mongodb.uri=mongodb://localhost:27017/hotel
-
+spring.mongodb.uri=mongodb://mongo:27017/hoteldb
 
 File: ./booking/src/test/java/org/example/booking/BookingApplicationTests.java
 package org.example.booking;
@@ -1014,6 +970,36 @@ class BookingApplicationTests {
 
 }
 
+File: ./default.conf
+upstream booking-service {
+    server booking:8080;
+}
+
+upstream user-service {
+    server auth:8080;
+}
+
+upstream search-service {
+    server search:8080;
+}
+
+server {
+
+    listen 80;
+
+    location /api/users/ {
+        proxy_pass http://user-service;
+    }
+
+    location /api/bookings/ {
+        proxy_pass http://booking-service;
+    }
+
+    location /api/search/ {
+        proxy_pass http://search-service;
+    }
+}
+
 File: ./docker-compose.yml
 version: "3.9"
 
@@ -1027,7 +1013,7 @@ services:
       - mongo
 
     environment:
-      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/hoteldb
+      SPRING_DATA_MONGODB_URI: mongodb://mongo:27017/hoteldb
 
   booking:
     build:
@@ -1038,7 +1024,7 @@ services:
       - mongo
 
     environment:
-      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/hoteldb
+      SPRING_DATA_MONGODB_URI: mongodb://mongo:27017/hoteldb
 
   search:
     build:
@@ -1049,7 +1035,7 @@ services:
       - mongo
 
     environment:
-      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/hoteldb
+      SPRING_DATA_MONGODB_URI: mongodb://mongo:27017/hoteldb
 
 
   mongo:
@@ -1071,9 +1057,8 @@ services:
     ports:
       - "3000:80"
     volumes:
-      - ./default.conf:/etc/nginx/default.conf:ro
+      - ./default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      - booking
       - search
       - auth
 
@@ -1096,6 +1081,10 @@ File: ./search/.gradle/buildOutputCleanup/cache.properties
 gradle.version=9.4.1
 
 File: ./search/.gradle/vcs-1/gc.properties   <EMPTY>
+
+File: ./search/BOOT-INF/classes/application.properties
+spring.application.name=search
+spring.mongodb.uri=mongodb://mongo:27017/hoteldb
 
 File: ./search/build.gradle
 plugins {
@@ -1132,37 +1121,14 @@ tasks.named('test') {
 
 File: ./search/build/resources/main/application.properties
 spring.application.name=search
+spring.mongodb.uri=mongodb://mongo:27017/hoteldb
 
 File: ./search/Dockerfile
-# -------- Build Stage --------
-FROM gradle:9.5.0-jdk25 AS builder
-
+FROM gradle:jdk25
 WORKDIR /app
-
-# Copy Gradle files first for better layer caching
-COPY build.gradle settings.gradle gradlew ./
-COPY gradle ./gradle
-
-# Download dependencies
-RUN ./gradlew dependencies --no-daemon || true
-
-# Copy source code
-COPY src ./src
-
-# Build application
-RUN ./gradlew clean bootJar --no-daemon
-
-# -------- Runtime Stage --------
-FROM eclipse-temurin:25-jre
-
-WORKDIR /app
-
-# Copy only the built jar from builder stage
-COPY --from=builder /app/build/libs/*.jar app.jar
-
-EXPOSE 8080
-
-ENTRYPOINT ["java", "-jar", "app.jar"]
+COPY . .
+#RUN gradle clean build
+CMD ["java", "-jar", "build/libs/search-0.0.1-SNAPSHOT.jar"]
 
 File: ./search/gradle/wrapper/gradle-wrapper.properties
 distributionBase=GRADLE_USER_HOME
@@ -1313,7 +1279,7 @@ public record HotelView(String hotelId, String name, int rooms, String city) {
 
 File: ./search/src/main/resources/application.properties
 spring.application.name=search
-spring.mongodb.uri=mongodb://localhost:27017/hoteldb
+spring.mongodb.uri=mongodb://mongo:27017/hoteldb
 
 File: ./search/src/test/java/org/example/search/SearchApplicationTests.java
 package org.example.search;
@@ -1335,3 +1301,87 @@ rootProject.name = 'hotel-app-microservices'
 include(
   "auth", "booking","search"
 )
+
+File: ./worker/.gradle/9.4.1/gc.properties   <EMPTY>
+
+File: ./worker/.gradle/buildOutputCleanup/cache.properties
+#Sat May 23 14:13:41 IST 2026
+gradle.version=9.4.1
+
+File: ./worker/.gradle/vcs-1/gc.properties   <EMPTY>
+
+File: ./worker/build.gradle
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.0.6'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'org.example'
+version = '0.0.1-SNAPSHOT'
+description = 'worker'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    testImplementation 'org.springframework.boot:spring-boot-starter-data-redis-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+File: ./worker/gradle/wrapper/gradle-wrapper.properties
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-9.4.1-bin.zip
+networkTimeout=10000
+validateDistributionUrl=true
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+
+File: ./worker/settings.gradle
+rootProject.name = 'worker'
+
+File: ./worker/src/main/java/org/example/worker/WorkerApplication.java
+package org.example.worker;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class WorkerApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(WorkerApplication.class, args);
+    }
+
+}
+
+File: ./worker/src/main/resources/application.properties
+spring.application.name=worker
+
+File: ./worker/src/test/java/org/example/worker/WorkerApplicationTests.java
+package org.example.worker;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+
+@SpringBootTest
+class WorkerApplicationTests {
+
+    @Test
+    void contextLoads() {
+    }
+
+}

@@ -60,7 +60,7 @@ public class AppUserDetailsService implements UserDetailsService {
   }
 
   public String getUserId(String user) {
-    String userId = this.userRepository.findUserIdByUsername(user);
+    String userId = String.valueOf(this.userRepository.findUserIdByUsername(user));
     ObjectMapper objectMapper = new ObjectMapper();
     JsonNode jsonNode = objectMapper.readTree(userId);
     String id = jsonNode.get("_id").asText();

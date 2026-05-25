@@ -10,7 +10,7 @@ services:
       - mongo
 
     environment:
-      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/hoteldb
+      SPRING_DATA_MONGODB_URI: mongodb://mongo:27017/hoteldb
 
   booking:
     build:
@@ -21,7 +21,7 @@ services:
       - mongo
 
     environment:
-      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/hoteldb
+      SPRING_DATA_MONGODB_URI: mongodb://mongo:27017/hoteldb
 
   search:
     build:
@@ -32,7 +32,7 @@ services:
       - mongo
 
     environment:
-      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/hoteldb
+      SPRING_DATA_MONGODB_URI: mongodb://mongo:27017/hoteldb
 
 
   mongo:
@@ -58,6 +58,7 @@ services:
     depends_on:
       - search
       - auth
+      - booking
 
 volumes:
   mongo-data:

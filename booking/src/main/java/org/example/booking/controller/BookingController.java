@@ -1,5 +1,6 @@
 package org.example.booking.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
 import org.example.booking.model.Booking;
 import org.example.booking.service.BookingService;
 import org.example.booking.view.BookingDetailsView;
@@ -25,9 +26,19 @@ public class BookingController {
 	}
 
 	@PostMapping
-	public ResponseEntity<BookingView> bookHotel(@RequestBody BookingRequest bookingRequest, Authentication user) {
-		String userId = getUserId(user.getName());
-		BookingView bookingView = bookingService.book(userId, bookingRequest.hotelId(), bookingRequest.rooms());
+	public ResponseEntity<BookingView> bookHotel(@RequestBody BookingRequest bookingRequest, Authentication user, HttpServletRequest request) {
+
+		String token = request.getHeader("Authorization");
+
+		String userId = getUserId(user.getName(), token);
+
+		BookingView bookingView =
+				bookingService.book(
+						userId,
+						bookingRequest.hotelId(),
+						bookingRequest.rooms()
+				);
+
 		return ResponseEntity.ok(bookingView);
 	}
 
@@ -38,17 +49,24 @@ public class BookingController {
 	}
 
 	@GetMapping
-	public ResponseEntity<List<BookingDetailsView>> listHotels(Authentication user) {
-		String userId = getUserId(user.getName());
-		List<Booking> bookings = bookingService.getBookings(userId);
-		List<BookingDetailsView> bookingList = bookings.stream().map(Booking::project).toList();
+	public ResponseEntity<List<BookingDetailsView>> listHotels(Authentication user, HttpServletRequest request) {
+		String token = request.getHeader("Authorization");
+		String userId = getUserId(user.getName(), token);
+		List<Booking> bookings =
+				bookingService.getBookings(userId);
+		List<BookingDetailsView> bookingList =
+				bookings.stream()
+						.map(Booking::project)
+						.toList();
+
 		return ResponseEntity.ok(bookingList);
 	}
 
-	private String getUserId(String name) {
-		return restClient.get()
-				.uri("/internal/users/{name}", name)
-				.retrieve()
-				.body(String.class);
+	private String getUserId(String name, String token) {
+			return restClient.get()
+					.uri("/internal/users/{name}", name)
+					.header("Authorization", token)
+					.retrieve()
+					.body(String.class);
 	}
 }

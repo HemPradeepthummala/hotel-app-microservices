@@ -12,23 +12,23 @@ import org.springframework.stereotype.Component;
 @Component
 public class Security {
 
-  @Bean
-  public SecurityFilterChain securityFilterChain(
-      HttpSecurity httpSecurity,
-      JwtFilter jwtFilter) throws Exception {
+	@Bean
+	public SecurityFilterChain securityFilterChain(
+			HttpSecurity httpSecurity,
+			JwtFilter jwtFilter) throws Exception {
 
-    httpSecurity
-        .cors(Customizer.withDefaults())
-        .csrf(AbstractHttpConfigurer::disable)
-        .sessionManagement(session ->
-            session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-        .authorizeHttpRequests(auth -> auth
-            .anyRequest().authenticated())
-        .addFilterBefore(
-            jwtFilter,
-            UsernamePasswordAuthenticationFilter.class
-        );
+		httpSecurity
+				.cors(Customizer.withDefaults())
+				.csrf(AbstractHttpConfigurer::disable)
+				.sessionManagement(session ->
+						session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+				.authorizeHttpRequests(auth -> auth
+						.anyRequest().authenticated())
+				.addFilterBefore(
+						jwtFilter,
+						UsernamePasswordAuthenticationFilter.class
+				);
 
-    return httpSecurity.build();
-  }
+		return httpSecurity.build();
+	}
 }
